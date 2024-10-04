@@ -37,6 +37,8 @@ using std::array;
 using DauTracks = soa::Join<aod::DauTrackExtras, aod::DauTrackTPCPIDs>;
 using CollEventPlane = soa::Join<aod::StraCollisions, aod::StraCents, aod::StraEvSels, aod::StraFT0CQVs, aod::StraRawCents, aod::StraFT0CQVsEv, aod::StraTPCQVs>::iterator;
 using CollEventPlaneCentralFW = soa::Join<aod::StraCollisions, aod::StraCents, aod::StraEvSels, aod::StraFT0CQVs, aod::StraRawCents, aod::StraTPCQVs>::iterator;
+using CascCandidates = soa::Join<aod::CascCollRefs, aod::CascCores, aod::CascExtras, aod::CascBBs>;
+using CascMCCandidates = soa::Join<aod::CascCollRefs, aod::CascCores, aod::CascExtras, aod::CascBBs, aod::CascMCMothers, aod::CascCoreMCLabels>;
 
 namespace cascadev2
 {
@@ -298,6 +300,25 @@ struct cascadeFlow {
   template <class collision_t, class cascade_t>
   void fillAnalysedTable(collision_t coll, cascade_t casc, float v2CSP, float v2CEP, float PsiT0C, float BDTresponseXi, float BDTresponseOmega)
   {
+    double masses[2]{o2::constants::physics::MassXiMinus, o2::constants::physics::MassOmegaMinus};
+    ROOT::Math::PxPyPzMVector cascadeVector[2], lambdaVector, protonVector;
+    float cosThetaStarLambda[2], cosThetaStarProton;
+    lambdaVector.SetCoordinates(casc.pxlambda(), casc.pylambda(), casc.pzlambda(), o2::constants::physics::MassLambda);
+    ROOT::Math::Boost lambdaBoost{lambdaVector.BoostToCM()};
+    if (casc.sign() < 0) {
+      protonVector.SetCoordinates(casc.pxneg(), casc.pyneg(), casc.pzneg(), o2::constants::physics::MassProton);
+    } else {
+      protonVector.SetCoordinates(casc.pxpos(), casc.pypos(), casc.pzpos(), o2::constants::physics::MassProton);
+    }
+    auto boostedProton{lambdaBoost(protonVector)};
+    cosThetaStarProton = boostedProton.Pz() / boostedProton.P();
+    for (int i{0}; i < 2; ++i) {
+      cascadeVector[i].SetCoordinates(casc.px(), casc.py(), casc.pz(), masses[i]);
+      ROOT::Math::Boost cascadeBoost{cascadeVector[i].BoostToCM()};
+      auto boostedLambda{cascadeBoost(lambdaVector)};
+      cosThetaStarLambda[i] = boostedLambda.Pz() / boostedLambda.P();
+    }
+
     analysisSample(coll.centFT0C(),
                    casc.sign(),
                    casc.pt(),
@@ -309,7 +330,10 @@ struct cascadeFlow {
                    v2CEP,
                    PsiT0C,
                    BDTresponseXi,
-                   BDTresponseOmega);
+                   BDTresponseOmega,
+                   cosThetaStarLambda[0],
+                   cosThetaStarLambda[1],
+                   cosThetaStarProton);
   }
 
   void init(InitContext const&)
@@ -436,7 +460,7 @@ struct cascadeFlow {
     }
   }
 
-  void processTrainingSignal(soa::Join<aod::StraCollisions, aod::StraCents, aod::StraEvSels, aod::StraRawCents>::iterator const& coll, soa::Join<aod::CascCollRefs, aod::CascCores, aod::CascMCCores, aod::CascExtras, aod::CascBBs> const& Cascades, DauTracks const&)
+  void processTrainingSignal(soa::Join<aod::StraCollisions, aod::StraCents, aod::StraEvSels, aod::StraRawCents>::iterator const& coll, CascMCCandidates const& Cascades, DauTracks const&, soa::Join<aod::CascMCCores, aod::CascMCCollRefs> const&)
   {
 
     if (!AcceptEvent(coll)) {
@@ -446,9 +470,13 @@ struct cascadeFlow {
     histos.fill(HIST("hEventVertexZ"), coll.posZ());
 
     for (auto& casc : Cascades) {
-      int pdgCode{casc.pdgCode()};
-      if (!(std::abs(pdgCode) == 3312 && std::abs(casc.pdgCodeV0()) == 3122 && std::abs(casc.pdgCodeBachelor()) == 211)     // Xi
-          && !(std::abs(pdgCode) == 3334 && std::abs(casc.pdgCodeV0()) == 3122 && std::abs(casc.pdgCodeBachelor()) == 321)) // Omega
+      if (!casc.has_cascMCCore())
+        continue;
+
+      auto cascMC = casc.cascMCCore_as<soa::Join<aod::CascMCCores, aod::CascMCCollRefs>>();
+      int pdgCode{cascMC.pdgCode()};
+      if (!(std::abs(pdgCode) == 3312 && std::abs(cascMC.pdgCodeV0()) == 3122 && std::abs(cascMC.pdgCodeBachelor()) == 211)     // Xi
+          && !(std::abs(pdgCode) == 3334 && std::abs(cascMC.pdgCodeV0()) == 3122 && std::abs(cascMC.pdgCodeBachelor()) == 321)) // Omega
         continue;
 
       auto negExtra = casc.negTrackExtra_as<DauTracks>();
@@ -464,7 +492,7 @@ struct cascadeFlow {
     }
   }
 
-  void processAnalyseData(CollEventPlane const& coll, soa::Join<aod::CascCollRefs, aod::CascCores, aod::CascExtras, aod::CascBBs> const& Cascades, DauTracks const&)
+  void processAnalyseData(CollEventPlane const& coll, CascCandidates const& Cascades, DauTracks const&)
   {
 
     if (!AcceptEvent(coll)) {
@@ -586,7 +614,7 @@ struct cascadeFlow {
     }
   }
 
-  void processAnalyseDataEPCentralFW(CollEventPlaneCentralFW const& coll, soa::Join<aod::CascCollRefs, aod::CascCores, aod::CascExtras, aod::CascBBs> const& Cascades, DauTracks const&)
+  void processAnalyseDataEPCentralFW(CollEventPlaneCentralFW const& coll, CascCandidates const& Cascades, DauTracks const&)
   {
 
     if (!AcceptEvent(coll)) {
