@@ -21,6 +21,8 @@
 #include <map>
 #include <iterator>
 #include <utility>
+#include <string>
+#include <vector>
 
 #include "Framework/runDataProcessing.h"
 #include "Framework/RunningWorkflowInfo.h"
@@ -112,6 +114,7 @@ struct strangederivedbuilder {
   Produces<aod::StraFV0AQVs> StraFV0AQVs;     // FV0A Q-vector
   Produces<aod::StraTPCQVs> StraTPCQVs;       // TPC Q-vector
   Produces<aod::StraFT0CQVsEv> StraFT0CQVsEv; // events used to compute FT0C Q-vector (LF)
+  Produces<aod::StraZDCSP> StraZDCSP;         // ZDC Sums and Products
 
   //__________________________________________________
   // Generated binned data
@@ -128,6 +131,10 @@ struct strangederivedbuilder {
   // Found tags for findable exercise
   Produces<aod::V0FoundTags> v0FoundTags;
   Produces<aod::CascFoundTags> cascFoundTags;
+
+  //__________________________________________________
+  // Debug
+  Produces<aod::StraOrigins> straOrigin;
 
   // histogram registry for bookkeeping
   HistogramRegistry histos{"Histos", {}, OutputObjHandlingPolicy::AnalysisObject};
@@ -164,15 +171,17 @@ struct strangederivedbuilder {
   Configurable<bool> roundNSigmaVariables{"roundNSigmaVariables", false, "round NSigma variables"};
   Configurable<float> precisionNSigmas{"precisionNSigmas", 0.1f, "precision to keep NSigmas"};
 
-  Configurable<bool> fillRawFT0A{"fillRawFT0A", false, "Fill raw FT0A information for debug"};
-  Configurable<bool> fillRawFT0C{"fillRawFT0C", true, "Fill raw FT0C information for debug"};
-  Configurable<bool> fillRawFV0A{"fillRawFV0A", false, "Fill raw FV0A information for debug"};
-  Configurable<bool> fillRawFDDA{"fillRawFDDA", false, "Fill raw FDDA information for debug"};
-  Configurable<bool> fillRawFDDC{"fillRawFDDC", false, "Fill raw FDDC information for debug"};
-  Configurable<bool> fillRawZDC{"fillRawZDC", false, "Fill raw ZDC information for debug"};
-  Configurable<bool> fillRawNTracksEta1{"fillRawNTracksEta1", true, "Fill raw NTracks |eta|<1 information for debug"};
-  Configurable<bool> fillRawNTracksForCorrelation{"fillRawNTracksForCorrelation", true, "Fill raw NTracks for correlation cuts"};
-  Configurable<bool> fillTOFInformation{"fillTOFInformation", true, "Fill Daughter Track TOF information"};
+  struct : ConfigurableGroup {
+    Configurable<bool> fillRawFT0A{"fillRawFT0A", false, "Fill raw FT0A information for debug"};
+    Configurable<bool> fillRawFT0C{"fillRawFT0C", true, "Fill raw FT0C information for debug"};
+    Configurable<bool> fillRawFV0A{"fillRawFV0A", false, "Fill raw FV0A information for debug"};
+    Configurable<bool> fillRawFDDA{"fillRawFDDA", false, "Fill raw FDDA information for debug"};
+    Configurable<bool> fillRawFDDC{"fillRawFDDC", false, "Fill raw FDDC information for debug"};
+    Configurable<bool> fillRawZDC{"fillRawZDC", false, "Fill raw ZDC information for debug"};
+    Configurable<bool> fillRawNTracksEta1{"fillRawNTracksEta1", true, "Fill raw NTracks |eta|<1 information for debug"};
+    Configurable<bool> fillRawNTracksForCorrelation{"fillRawNTracksForCorrelation", true, "Fill raw NTracks for correlation cuts"};
+    Configurable<bool> fillTOFInformation{"fillTOFInformation", true, "Fill Daughter Track TOF information"};
+  } fillTruncationOptions;
 
   Configurable<bool> qaCentrality{"qaCentrality", false, "qa centrality flag: check base raw values"};
   struct : ConfigurableGroup {
@@ -347,29 +356,32 @@ struct strangederivedbuilder {
         strangeCents(collision.centFT0M(), collision.centFT0A(),
                      centrality, collision.centFV0A());
         strangeEvSels(collision.sel8(), collision.selection_raw(),
-                      collision.multFT0A() * static_cast<float>(fillRawFT0A),
-                      collision.multFT0C() * static_cast<float>(fillRawFT0C),
-                      collision.multFV0A() * static_cast<float>(fillRawFV0A),
-                      collision.multFDDA() * static_cast<float>(fillRawFDDA),
-                      collision.multFDDC() * static_cast<float>(fillRawFDDC),
-                      collision.multNTracksPVeta1() * static_cast<int>(fillRawNTracksEta1),
-                      collision.multPVTotalContributors() * static_cast<int>(fillRawNTracksForCorrelation),
-                      collision.multNTracksGlobal() * static_cast<int>(fillRawNTracksForCorrelation),
-                      collision.multNTracksITSTPC() * static_cast<int>(fillRawNTracksForCorrelation),
-                      collision.multAllTracksTPCOnly() * static_cast<int>(fillRawNTracksForCorrelation),
-                      collision.multAllTracksITSTPC() * static_cast<int>(fillRawNTracksForCorrelation),
-                      collision.multZNA() * static_cast<float>(fillRawZDC),
-                      collision.multZNC() * static_cast<float>(fillRawZDC),
-                      collision.multZEM1() * static_cast<float>(fillRawZDC),
-                      collision.multZEM2() * static_cast<float>(fillRawZDC),
-                      collision.multZPA() * static_cast<float>(fillRawZDC),
-                      collision.multZPC() * static_cast<float>(fillRawZDC),
+                      collision.multFT0A() * static_cast<float>(fillTruncationOptions.fillRawFT0A),
+                      collision.multFT0C() * static_cast<float>(fillTruncationOptions.fillRawFT0C),
+                      collision.multFV0A() * static_cast<float>(fillTruncationOptions.fillRawFV0A),
+                      collision.multFDDA() * static_cast<float>(fillTruncationOptions.fillRawFDDA),
+                      collision.multFDDC() * static_cast<float>(fillTruncationOptions.fillRawFDDC),
+                      collision.multNTracksPVeta1() * static_cast<int>(fillTruncationOptions.fillRawNTracksEta1),
+                      collision.multPVTotalContributors() * static_cast<int>(fillTruncationOptions.fillRawNTracksForCorrelation),
+                      collision.multNTracksGlobal() * static_cast<int>(fillTruncationOptions.fillRawNTracksForCorrelation),
+                      collision.multNTracksITSTPC() * static_cast<int>(fillTruncationOptions.fillRawNTracksForCorrelation),
+                      collision.multAllTracksTPCOnly() * static_cast<int>(fillTruncationOptions.fillRawNTracksForCorrelation),
+                      collision.multAllTracksITSTPC() * static_cast<int>(fillTruncationOptions.fillRawNTracksForCorrelation),
+                      collision.multZNA() * static_cast<float>(fillTruncationOptions.fillRawZDC),
+                      collision.multZNC() * static_cast<float>(fillTruncationOptions.fillRawZDC),
+                      collision.multZEM1() * static_cast<float>(fillTruncationOptions.fillRawZDC),
+                      collision.multZEM2() * static_cast<float>(fillTruncationOptions.fillRawZDC),
+                      collision.multZPA() * static_cast<float>(fillTruncationOptions.fillRawZDC),
+                      collision.multZPC() * static_cast<float>(fillTruncationOptions.fillRawZDC),
                       collision.trackOccupancyInTimeRange(),
+                      collision.ft0cOccupancyInTimeRange(),
                       // UPC info
                       gapSide,
                       totalFT0AmplitudeA, totalFT0AmplitudeC, totalFV0AmplitudeA,
                       totalFDDAmplitudeA, totalFDDAmplitudeC,
-                      energyCommonZNA, energyCommonZNC);
+                      energyCommonZNA, energyCommonZNC,
+                      // Collision flags
+                      collision.flags());
         strangeStamps(bc.runNumber(), bc.timestamp());
       }
       for (const auto& v0 : V0Table_thisColl)
@@ -393,7 +405,7 @@ struct strangederivedbuilder {
     for (const auto& casc : KFCascades) {
       kfcasccollref(KFCascadeCollIndices[casc.globalIndex()]);
     }
-    for (const auto& casc : KFCascades) {
+    for (const auto& casc : TraCascades) {
       tracasccollref(TraCascadeCollIndices[casc.globalIndex()]);
     }
   }
@@ -405,7 +417,8 @@ struct strangederivedbuilder {
     // ______________________________________________
     // fill all MC collisions, correlate via index later on
     for (const auto& mccollision : mcCollisions) {
-      strangeMCColl(mccollision.posX(), mccollision.posY(), mccollision.posZ(), mccollision.impactParameter());
+      strangeMCColl(mccollision.posX(), mccollision.posY(), mccollision.posZ(),
+                    mccollision.impactParameter(), mccollision.eventPlaneAngle());
       strangeMCMults(mccollision.multMCFT0A(), mccollision.multMCFT0C(),
                      mccollision.multMCNParticlesEta05(),
                      mccollision.multMCNParticlesEta08(),
@@ -791,6 +804,10 @@ struct strangederivedbuilder {
     StraFT0CQVs(collision.qFT0C() * std::cos(2 * collision.psiFT0C()), collision.qFT0C() * std::sin(2 * collision.psiFT0C()), collision.qFT0C());
     StraFT0CQVsEv(collision.triggereventep());
   }
+  void processZDCSP(soa::Join<aod::Collisions, aod::SPCalibrationTables>::iterator const& collision)
+  {
+    StraZDCSP(collision.triggereventsp(), collision.psiZDCA(), collision.psiZDCC());
+  }
   void processFT0MQVectors(soa::Join<aod::Collisions, aod::QvectorFT0Ms>::iterator const& collision)
   {
     StraFT0MQVs(collision.qvecFT0MRe(), collision.qvecFT0MIm(), collision.sumAmplFT0M());
@@ -862,6 +879,15 @@ struct strangederivedbuilder {
     }
   }
 
+  void processDataframeIDs(aod::Origins const& origins)
+  {
+    auto origin = origins.begin();
+    straOrigin(origin.dataframeID());
+  }
+
+  // debug processing
+  PROCESS_SWITCH(strangederivedbuilder, processDataframeIDs, "Produce data frame ID tags", false);
+
   // collision processing
   PROCESS_SWITCH(strangederivedbuilder, processCollisions, "Produce collisions", true);
   PROCESS_SWITCH(strangederivedbuilder, processCollisionsWithUD, "Produce collisions with UD info", true);
@@ -887,6 +913,7 @@ struct strangederivedbuilder {
   PROCESS_SWITCH(strangederivedbuilder, processFV0AQVectors, "Produce FV0A Q-vectors table", false);
   PROCESS_SWITCH(strangederivedbuilder, processTPCQVectors, "Produce TPC Q-vectors table", false);
   PROCESS_SWITCH(strangederivedbuilder, processTPCQVectorsLF, "Produce TPC Q-vectors table using LF temporary calibration", false);
+  PROCESS_SWITCH(strangederivedbuilder, processZDCSP, "Produce ZDC SP table", false);
 
   // dedicated findable functionality
   PROCESS_SWITCH(strangederivedbuilder, processV0FoundTags, "Produce FoundV0Tags for findable exercise", false);

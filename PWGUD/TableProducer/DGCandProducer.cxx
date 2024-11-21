@@ -11,9 +11,12 @@
 //
 // \brief Saves relevant information of DG candidates
 // \author Paul Buehler, paul.buehler@oeaw.ac.at
-
+#include <vector>
+#include <string>
+#include <map>
 #include "Framework/runDataProcessing.h"
 #include "Framework/AnalysisTask.h"
+#include "ReconstructionDataFormats/Vertex.h"
 #include "PWGUD/DataModel/UDTables.h"
 #include "PWGUD/Core/UPCHelpers.h"
 #include "PWGUD/Core/DGSelector.h"
@@ -54,7 +57,7 @@ struct DGCandProducer {
     {}};
 
   // data inputs
-  using CCs = soa::Join<aod::Collisions, aod::EvSels, aod::McCollisionLabels>;
+  using CCs = soa::Join<aod::Collisions, aod::EvSels>;
   using CC = CCs::iterator;
   using BCs = soa::Join<aod::BCsWithTimestamps, aod::BcSels, aod::Run3MatchedToBCSparse>;
   using BC = BCs::iterator;
@@ -237,7 +240,7 @@ struct DGCandProducer {
   void process(CC const& collision, BCs const& bcs, TCs& tracks, FWs& fwdtracks,
                aod::Zdcs& /*zdcs*/, aod::FV0As& fv0as, aod::FT0s& ft0s, aod::FDDs& fdds)
   {
-    LOGF(debug, "<DGCandProducer>  collision %d, McCollison %d", collision.globalIndex(), collision.mcCollisionId());
+    LOGF(debug, "<DGCandProducer>  collision %d", collision.globalIndex());
     registry.get<TH1>(HIST("reco/Stat"))->Fill(0., 1.);
 
     // nominal BC
@@ -269,8 +272,12 @@ struct DGCandProducer {
 
       // update DG candidates tables
       auto rtrwTOF = udhelpers::rPVtrwTOF<true>(tracks, collision.numContrib());
+      int upc_flag = 0;
+      ushort flags = collision.flags();
+      if (flags & dataformats::Vertex<o2::dataformats::TimeStamp<int>>::Flags::UPCMode)
+        upc_flag = 1;
       outputCollisions(bc.globalBC(), bc.runNumber(),
-                       collision.posX(), collision.posY(), collision.posZ(),
+                       collision.posX(), collision.posY(), collision.posZ(), upc_flag,
                        collision.numContrib(), udhelpers::netCharge<true>(tracks),
                        rtrwTOF);
       outputCollisionsSels(fitInfo.ampFT0A, fitInfo.ampFT0C, fitInfo.timeFT0A, fitInfo.timeFT0C,
@@ -572,7 +579,6 @@ struct McDGCandProducer {
     auto dgcandAtEnd = dgcand == lastdgcand;
     auto mccolAtEnd = mccol == lastmccol;
     bool goon = !dgcandAtEnd || !mccolAtEnd;
-    int counter = 0;
 
     while (goon) {
       // check if dgcand has an associated Collision and McCollision
@@ -616,7 +622,6 @@ struct McDGCandProducer {
           // update UDMcColsLabels (for each UDCollision -> UDMcCollisions)
           LOGF(debug, "  writing %d to outputMcCollsLabels", mcColIsSaved[mcdgId]);
           outputMcCollsLabels(mcColIsSaved[mcdgId]);
-          counter++;
 
           // update UDMcParticles
           auto mcPartsSlice = mcparts.sliceBy(mcPartsPerMcCollision, mcdgId);
@@ -632,7 +637,6 @@ struct McDGCandProducer {
           // update UDMcColsLabels (for each UDCollision -> UDMcCollisions)
           LOGF(debug, "  writing %d to UDMcCollsLabels", -1);
           outputMcCollsLabels(-1);
-          counter++;
 
           // update UDMcParticles and UDMcTrackLabels (for each UDTrack -> UDMcParticles)
           // loop over tracks of dgcand
