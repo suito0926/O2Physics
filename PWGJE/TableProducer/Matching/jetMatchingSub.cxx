@@ -55,11 +55,6 @@ struct JetMatchingSub {
   {
   }
 
-  void processDummy(aod::JetCollisions const&)
-  {
-  }
-  PROCESS_SWITCH(JetMatchingSub, processDummy, "Dummy process", true);
-
   void processJets(aod::JetCollisions const& collisions,
                    JetsBase const& jetsBase, JetsTag const& jetsTag,
                    aod::JetTracks const& tracks, TracksTag const& tracksSub, Candidates const& candidates)
@@ -91,12 +86,5 @@ struct JetMatchingSub {
       jetsTagtoBaseMatchingTable(jetsTagtoBaseMatchingGeo[i], jetsTagtoBaseMatchingPt[i], jetsTagtoBaseMatchingHF[i]); // is (and needs to) be filled in order
     }
   }
-  PROCESS_SWITCH(JetMatchingSub, processJets, "Perform jet matching", false);
+  PROCESS_SWITCH(JetMatchingSub, processJets, "Perform jet matching", true);
 };
-
-/*using BplusChargedJetMatching = JetMatchingSub<soa::Join<aod::BplusChargedJets, aod::BplusChargedJetConstituents>,
-                                               soa::Join<aod::BplusChargedEventWiseSubtractedJets, aod::BplusChargedEventWiseSubtractedJetConstituents>,
-                                               aod::BplusChargedJetsMatchedToBplusChargedEventWiseSubtractedJets,
-                                               aod::BplusChargedEventWiseSubtractedJetsMatchedToBplusChargedJets,
-                                               aod::JTrackBplusSubs,
-                                               aod::CandidatesBplusData>;*/

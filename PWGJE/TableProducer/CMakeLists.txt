@@ -9,6 +9,7 @@
 # granted to it by virtue of its status as an Intergovernmental Organization
 # or submit itself to any jurisdiction.
 
+add_subdirectory(Matching)
 
 if(FastJet_FOUND)
 
@@ -34,6 +35,11 @@ o2physics_add_dpl_workflow(jet-deriveddata-producer-dummy-d0
 
 o2physics_add_dpl_workflow(jet-deriveddata-producer-dummy-lc
                     SOURCES derivedDataProducerDummyLc.cxx
+                    PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::PWGJECore O2Physics::AnalysisCore
+                    COMPONENT_NAME Analysis)
+
+o2physics_add_dpl_workflow(jet-deriveddata-producer-dummy-bplus
+                    SOURCES derivedDataProducerDummyBplus.cxx
                     PUBLIC_LINK_LIBRARIES O2::Framework O2Physics::PWGJECore O2Physics::AnalysisCore
                     COMPONENT_NAME Analysis)
 

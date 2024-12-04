@@ -9,10 +9,10 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-#include <vector>;
-#include <algorithm>;
-#include <map>;
-#include <string>;
+#include <vector>
+#include <algorithm>
+#include <map>
+#include <string>
 
 #include "Framework/ConfigParamSpec.h"
 #include "Framework/runDataProcessing.h"
@@ -633,7 +633,7 @@ struct MultiplicityTable {
   // one loop better than multiple sliceby calls
   // FIT FT0C: -3.3 < η < -2.1
   // FOT FT0A:  3.5 < η <  4.9
-  Filter mcParticleFilter = (aod::mcparticle::eta < 4.9f) && (aod::mcparticle::eta > -3.3f);
+  Filter mcParticleFilter = (aod::mcparticle::eta < 7.0f) && (aod::mcparticle::eta > -7.0f);
   using mcParticlesFiltered = soa::Filtered<aod::McParticles>;
 
   void processMC(aod::McCollision const& mcCollision, mcParticlesFiltered const& mcParticles)
