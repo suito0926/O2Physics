@@ -15,6 +15,7 @@
 
 #include <TH2F.h>
 #include <TProfile2D.h>
+#include <TPDGCode.h>
 #include <CCDB/BasicCCDBManager.h>
 #include <vector>
 #include <cstdio>
@@ -23,6 +24,7 @@
 #include "ReconstructionDataFormats/PID.h"
 #include "Common/Core/TrackSelection.h"
 #include "Common/Core/TableHelper.h"
+#include "Common/Core/RecoDecay.h"
 #include "Common/DataModel/TrackSelectionTables.h"
 #include "Common/DataModel/PIDResponse.h"
 #include "Framework/ASoAHelpers.h"
@@ -50,6 +52,11 @@ using namespace o2::framework::expressions;
 #define HNAMESTRING(thehnamefmt, thehnamepars...) FORMATSTRING(thehnamefmt, thehnamepars)
 #define HTITLESTRING(thehtitlefmt, thehtitlepars...) FORMATSTRING(thehtitlefmt, thehtitlepars)
 
+namespace o2::analysis::dptdptfilter
+{
+TpcExcludeTrack tpcExcluder; ///< the TPC excluder object instance
+} // namespace o2::analysis::dptdptfilter
+
 namespace efficiencyandqatask
 {
 /// \enum KindOfProcessQA
@@ -74,6 +81,16 @@ enum BeforeAfter {
   kAfter       ///< filling after track selection
 };
 
+/* the structures for checking the TPC sector borders impact */
+constexpr int kNoOfTpcSectors = 18;
+constexpr float kTpcPhiSectorWidth = (constants::math::TwoPI) / kNoOfTpcSectors;
+
+/* the configuration of the nsigma axis */
+float minNSigma = -4.05f;
+float maxNSigma = 4.05f;
+float widthNSigmaBin = 0.1f;
+int noOfNSigmaBins = static_cast<int>((maxNSigma - minNSigma) / widthNSigmaBin);
+
 /* the PID selector object to help with the configuration and the id of the selected particles */
 o2::analysis::dptdptfilter::PIDSpeciesSelection pidselector;
 
@@ -87,7 +104,7 @@ static const std::vector<std::string> allmainsptitles{"e^{#plus}", "e^{#minus}",
 static const std::vector<o2::track::PID::ID> mainspecies{o2::track::PID::Pion, o2::track::PID::Kaon, o2::track::PID::Proton};
 static const std::vector<std::string> mainspnames{"PionP", "PionM", "KaonP", "KaonM", "ProtonP", "ProtonM"};
 static const std::vector<std::string> mainsptitles{"#pi^{#plus}", "#pi^{#minus}", "K^{#plus}", "K^{#minus}", "p", "#bar{p}"};
-static const std::vector<int> pdgcodes = {11, 13, 211, 321, 2212};
+static const std::vector<int> pdgcodes = {kElectron, kMuonPlus, kPiPlus, kKPlus, kProton};
 } // namespace efficiencyandqatask
 
 /* the QA data collecting engine */
@@ -109,9 +126,17 @@ struct QADataCollectingEngine {
   std::vector<std::shared_ptr<TH1>> fhPtB{2, nullptr};
   std::vector<std::shared_ptr<TH2>> fhPtVsEtaB{2, nullptr};
   std::vector<std::shared_ptr<TH2>> fhPtVsZvtxB{2, nullptr};
+  std::shared_ptr<TH2> fhPhiVsPtPosB{nullptr};
+  std::shared_ptr<TH2> fhPhiVsInnerWallMomPosB{nullptr};
+  std::shared_ptr<TH2> fhPhiVsPtNegB{nullptr};
+  std::shared_ptr<TH2> fhPhiVsInnerWallMomNegB{nullptr};
   std::vector<std::vector<std::shared_ptr<TH1>>> fhPtA{2, {nsp, nullptr}};
   std::vector<std::vector<std::shared_ptr<TH2>>> fhPtVsEtaA{2, {nsp, nullptr}};
   std::vector<std::vector<std::shared_ptr<TH2>>> fhPtVsZvtxA{2, {nsp, nullptr}};
+  std::vector<std::shared_ptr<TH2>> fhPhiVsPtA{nsp, nullptr};
+  std::vector<std::shared_ptr<TH2>> fhPhiVsInnerWallMomA{nsp, nullptr};
+  std::vector<std::shared_ptr<TH2>> fhPhiShiftedVsPtA{nsp, nullptr};
+  std::vector<std::shared_ptr<TH2>> fhPhiShiftedVsInnerWallMomA{nsp, nullptr};
   std::shared_ptr<TH2> fhPtVsEtaItsAcc{nullptr};
   std::shared_ptr<TH2> fhPtVsEtaTpcAcc{nullptr};
   std::shared_ptr<TH2> fhPtVsEtaItsTpcAcc{nullptr};
@@ -171,11 +196,15 @@ struct QADataCollectingEngine {
     using namespace efficiencyandqatask;
     using namespace analysis::dptdptfilter;
 
+    AxisSpec pidPtAxis{150, 0.1, 5.0, "#it{p}_{T} (GeV/#it{c})"};
     AxisSpec pidPAxis{150, 0.1, 5.0, "#it{p} (GeV/#it{c})"};
+    pidPtAxis.makeLogarithmic();
     pidPAxis.makeLogarithmic();
     const AxisSpec ptAxis{ptbins, ptlow, ptup, "#it{p}_{T} (GeV/c)"};
     const AxisSpec etaAxis{etabins, etalow, etaup, "#eta"};
-    const AxisSpec phiAxis{360, 0.0f, constants::math::TwoPI, "#varphi"};
+    const AxisSpec phiAxis{360, 0.0f, constants::math::TwoPI, "#varphi (rad)"};
+    const AxisSpec phiSectorAxis{144, 0.0f, 0.36, "#varphi (mod(2#pi/18) (rad))"};
+    const AxisSpec phiShiftedSectorAxis{220, -55.0f, 55.0f, "% of the sector"};
     const AxisSpec zvtxAxis{zvtxbins, zvtxlow, zvtxup, "#it{z}_{vtx}"};
     const AxisSpec itsNClsAxis{8, -0.5, 7.5, "ITS n clusters"};
     const AxisSpec itsCh2Axis{100, 0, 40, "#Chi^{2}/Cls ITS"};
@@ -198,6 +227,10 @@ struct QADataCollectingEngine {
 
     if constexpr (kindOfData == kReco) {
       /* only the reconstructed level histograms*/
+      fhPhiVsPtPosB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "PhiVsPtPos", "#varphi (mod(2#pi/18))", kTH2F, {pidPtAxis, phiSectorAxis});
+      fhPhiVsInnerWallMomPosB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "PhiVsIwMomPos", "#varphi (mod(2#pi/18)) TPC_{iw} #it{p}", kTH2F, {pidPAxis, phiSectorAxis});
+      fhPhiVsPtNegB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "PhiVsPtNeg", "#varphi (mod(2#pi/18))", kTH2F, {pidPtAxis, phiSectorAxis});
+      fhPhiVsInnerWallMomNegB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "PhiVsIwMomNeg", "#varphi (mod(2#pi/18)) TPC_{iw} #it{p}", kTH2F, {pidPAxis, phiSectorAxis});
       fhItsNClsVsPtB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "ITSNCls", "ITS clusters", kTH2F, {ptAxis, itsNClsAxis});
       fhItsChi2NClsVsPtB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "ITSChi2NCls", "ITS #Chi^{2}", kTH2F, {ptAxis, itsCh2Axis});
       fhTpcFindableNClsVsPtB = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "Before"), "TPCFindableNCls", "TPC findable clusters", kTH2F, {ptAxis, tpcNClsAxis});
@@ -216,6 +249,10 @@ struct QADataCollectingEngine {
       fhPtVsEtaTpcTofAcc = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Efficiency", "Reco"), "ptTpcTofAcc", "TPC&TOF tracks within the acceptance", kTH2F, {etaAxis, ptAxis});
       fhPtVsEtaItsTpcTofAcc = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Efficiency", "Reco"), "ptItsTpcTofAcc", "ITS&TPC&TOF tracks within the acceptance", kTH2F, {etaAxis, ptAxis});
       for (uint isp = 0; isp < nsp; ++isp) {
+        fhPhiVsPtA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("PhiVsPt_%s", tnames[isp].c_str()), HTITLESTRING("#varphi %s (mod(2#pi/18))", tnames[isp].c_str()), kTH2F, {pidPtAxis, phiSectorAxis});
+        fhPhiVsInnerWallMomA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("PhiVsIwMom_%s", tnames[isp].c_str()), HTITLESTRING("#varphi %s (mod(2#pi/18)) TPC_{iw} #it{p}", tnames[isp].c_str()), kTH2F, {pidPAxis, phiSectorAxis});
+        fhPhiShiftedVsPtA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("PhiShiftedVsPt_%s", tnames[isp].c_str()), HTITLESTRING("%s TPC sector %%", tnames[isp].c_str()), kTH2F, {pidPtAxis, phiShiftedSectorAxis});
+        fhPhiShiftedVsInnerWallMomA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("PhiShiftedVsIwMom_%s", tnames[isp].c_str()), HTITLESTRING("%s TPC sector %% TPC_{iw} #it{p}", tnames[isp].c_str()), kTH2F, {pidPAxis, phiShiftedSectorAxis});
         fhItsNClsVsPtA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("ITSNCls_%s", tnames[isp].c_str()), HTITLESTRING("ITS clusters %s", tnames[isp].c_str()), kTH2F, {ptAxis, itsNClsAxis});
         fhItsChi2NClsVsPtA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("ITSChi2NCls_%s", tnames[isp].c_str()), HTITLESTRING("ITS #Chi^{2} %s", tnames[isp].c_str()), kTH2F, {ptAxis, itsCh2Axis});
         fhTpcFindableNClsVsPtA[isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "Reco", "After"), HNAMESTRING("TPCFindableNCls_%s", tnames[isp].c_str()), HTITLESTRING("TPC findable clusters %s", tnames[isp].c_str()), kTH2F, {ptAxis, tpcNClsAxis});
@@ -327,6 +364,16 @@ struct QADataCollectingEngine {
       bool hastpc = track.hasTPC() && TrackSelectionFlags::checkFlag(track.trackCutFlag(), TrackSelectionTPC);
       bool hastof = track.hasTOF();
 
+      float phiInTpcSector = std::fmod(track.phi(), kTpcPhiSectorWidth);
+      float phiShiftedPercentInTpcSector = phiInTpcSector * 100 / kTpcPhiSectorWidth;
+      phiShiftedPercentInTpcSector = (phiShiftedPercentInTpcSector > 50.0f) ? (phiShiftedPercentInTpcSector - 100.0f) : phiShiftedPercentInTpcSector;
+      if (track.sign() > 0) {
+        fhPhiVsPtPosB->Fill(track.pt(), phiInTpcSector);
+        fhPhiVsInnerWallMomPosB->Fill(track.tpcInnerParam(), phiInTpcSector);
+      } else {
+        fhPhiVsPtNegB->Fill(track.pt(), phiInTpcSector);
+        fhPhiVsInnerWallMomNegB->Fill(track.tpcInnerParam(), phiInTpcSector);
+      }
       fhItsNClsVsPtB->Fill(track.pt(), track.itsNCls());
       fhItsChi2NClsVsPtB->Fill(track.pt(), track.itsChi2NCl());
       fhTpcFindableNClsVsPtB->Fill(track.pt(), track.tpcNClsFindable());
@@ -346,6 +393,10 @@ struct QADataCollectingEngine {
         fillhisto(fhPtVsEtaItsTpcTofAcc, hasits && hastpc && hastof);
       }
       if (!(track.trackacceptedid() < 0)) {
+        fhPhiVsPtA[track.trackacceptedid()]->Fill(track.pt(), phiInTpcSector);
+        fhPhiVsInnerWallMomA[track.trackacceptedid()]->Fill(track.tpcInnerParam(), phiInTpcSector);
+        fhPhiShiftedVsPtA[track.trackacceptedid()]->Fill(track.pt(), phiShiftedPercentInTpcSector);
+        fhPhiShiftedVsInnerWallMomA[track.trackacceptedid()]->Fill(track.tpcInnerParam(), phiShiftedPercentInTpcSector);
         fhItsNClsVsPtA[track.trackacceptedid()]->Fill(track.pt(), track.itsNCls());
         fhItsChi2NClsVsPtA[track.trackacceptedid()]->Fill(track.pt(), track.itsChi2NCl());
         fhTpcFindableNClsVsPtA[track.trackacceptedid()]->Fill(track.pt(), track.tpcNClsFindable());
@@ -487,24 +538,24 @@ struct PidDataCollectingEngine {
           fhTPCTOFSigmaVsP[ix][isp] = ADDHISTOGRAM(TH3, DIRECTORYSTRING("%s/%s/%s", dirname, "PID", whenname[ix].c_str()),
                                                    HNAMESTRING("toftpcNSigmasVsP%c_%s", whenprefix[ix], mainspnames[isp].c_str()),
                                                    HTITLESTRING("n#sigma to the %s line %s", mainsptitles[isp].c_str(), whentitle[ix].c_str()),
-                                                   kTH3F, {pidPAxis, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TPC}^{%s}", mainsptitles[isp].c_str())}, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TOF}^{%s}", mainsptitles[isp].c_str())}});
+                                                   kTH3F, {pidPAxis, {noOfNSigmaBins, minNSigma, maxNSigma, FORMATSTRING("n#sigma_{TPC}^{%s}", mainsptitles[isp].c_str())}, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TOF}^{%s}", mainsptitles[isp].c_str())}});
         }
         for (uint isp = 0; isp < nallmainsp; ++isp) {
           fhTPCnSigmasVsP[ix][isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "PID", whenname[ix].c_str()),
                                                   HNAMESTRING("tpcNSigmasVsP%c_%s", whenprefix[ix], allmainspnames[isp].c_str()),
                                                   HTITLESTRING("TPC n#sigma to the %s line %s", allmainsptitles[isp].c_str(), whentitle[ix].c_str()),
-                                                  kTH2F, {pidPAxis, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TPC}^{%s}", allmainsptitles[isp].c_str())}});
+                                                  kTH2F, {pidPAxis, {noOfNSigmaBins, minNSigma, maxNSigma, FORMATSTRING("n#sigma_{TPC}^{%s}", allmainsptitles[isp].c_str())}});
           fhTOFnSigmasVsP[ix][isp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "PID", whenname[ix].c_str()),
                                                   HNAMESTRING("tofNSigmasVsP%c_%s", whenprefix[ix], allmainspnames[isp].c_str()),
                                                   HTITLESTRING("TOF n#sigma to the %s line %s", allmainsptitles[isp].c_str(), whentitle[ix].c_str()),
-                                                  kTH2F, {pidPAxis, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TOF}^{%s}", allmainsptitles[isp].c_str())}});
+                                                  kTH2F, {pidPAxis, {noOfNSigmaBins, minNSigma, maxNSigma, FORMATSTRING("n#sigma_{TOF}^{%s}", allmainsptitles[isp].c_str())}});
         }
       }
     }
   }
 
   template <o2::track::PID::ID id, typename TrackObject>
-  void fillAllSpeciesPID(uint ix, TrackObject const& track, float mom)
+  void fillAllSpeciesPID(uint ix, TrackObject const& track, float tpcmom, float tofmom)
   {
     if (track.sign() < 0) {
       ix = 2 * ix + 1;
@@ -512,8 +563,8 @@ struct PidDataCollectingEngine {
       ix = 2 * ix;
     }
     for (uint when = 0; when < 2; ++when) {
-      fhTPCnSigmasVsP[when][ix]->Fill(mom, o2::aod::pidutils::tpcNSigma<id>(track));
-      fhTOFnSigmasVsP[when][ix]->Fill(mom, o2::aod::pidutils::tofNSigma<id>(track));
+      fhTPCnSigmasVsP[when][ix]->Fill(tpcmom, o2::aod::pidutils::tpcNSigma<id>(track));
+      fhTOFnSigmasVsP[when][ix]->Fill(tofmom, o2::aod::pidutils::tofNSigma<id>(track));
       if (track.trackacceptedid() < 0) {
         /* track not accepted */
         return;
@@ -522,7 +573,7 @@ struct PidDataCollectingEngine {
   }
 
   template <o2::track::PID::ID id, typename TrackObject>
-  void fillSpeciesPID(uint ix, TrackObject const& track, float mom)
+  void fillSpeciesPID(uint ix, TrackObject const& track, float tpcmom, float tofmom)
   {
     if (track.sign() < 0) {
       ix = 2 * ix + 1;
@@ -530,9 +581,9 @@ struct PidDataCollectingEngine {
       ix = 2 * ix;
     }
     for (uint when = 0; when < 2; ++when) {
-      fhTPCdEdxSignalDiffVsP[when][ix]->Fill(mom, o2::aod::pidutils::tpcExpSignalDiff<id>(track));
-      fhTOFSignalDiffVsP[when][ix]->Fill(mom, o2::aod::pidutils::tofExpSignalDiff<id>(track));
-      fhTPCTOFSigmaVsP[when][ix]->Fill(mom, o2::aod::pidutils::tpcNSigma<id>(track), o2::aod::pidutils::tofNSigma<id>(track));
+      fhTPCdEdxSignalDiffVsP[when][ix]->Fill(tpcmom, o2::aod::pidutils::tpcExpSignalDiff<id>(track));
+      fhTOFSignalDiffVsP[when][ix]->Fill(tofmom, o2::aod::pidutils::tofExpSignalDiff<id>(track));
+      fhTPCTOFSigmaVsP[when][ix]->Fill(tpcmom, o2::aod::pidutils::tpcNSigma<id>(track), o2::aod::pidutils::tofNSigma<id>(track));
       if (track.trackacceptedid() < 0) {
         /* track not accepted */
         return;
@@ -541,12 +592,16 @@ struct PidDataCollectingEngine {
   }
 
   template <typename TrackObject>
-  void fillPID(TrackObject const& track, float mom)
+  void fillPID(TrackObject const& track, float tpcmom, float tofmom)
   {
     for (uint when = 0; when < 2; ++when) {
-      fhTPCdEdxSignalVsP[when]->Fill(mom, track.tpcSignal());
-      fhTOFSignalVsP[when]->Fill(mom, track.beta());
-      fhPvsTOFSqMass[when]->Fill(track.mass() * track.mass(), mom);
+      if constexpr (framework::has_type_v<o2::aod::mcpidtpc::DeDxTunedMc, typename TrackObject::all_columns>) {
+        fhTPCdEdxSignalVsP[when]->Fill(tpcmom, track.mcTunedTPCSignal());
+      } else {
+        fhTPCdEdxSignalVsP[when]->Fill(tpcmom, track.tpcSignal());
+      }
+      fhTOFSignalVsP[when]->Fill(tofmom, track.beta());
+      fhPvsTOFSqMass[when]->Fill(track.mass() * track.mass(), tofmom);
       if (track.trackacceptedid() < 0) {
         /* track not accepted */
         return;
@@ -555,20 +610,20 @@ struct PidDataCollectingEngine {
   }
 
   template <efficiencyandqatask::KindOfData kindOfData, typename TrackObject>
-  void processTrack(TrackObject const& track, float mom)
+  void processTrack(TrackObject const& track, float tpcmom, float tofmom)
   {
     using namespace efficiencyandqatask;
 
     if constexpr (kindOfData == kReco) {
-      fillPID(track, mom);
-      fillSpeciesPID<o2::track::PID::Pion>(0, track, mom);
-      fillSpeciesPID<o2::track::PID::Kaon>(1, track, mom);
-      fillSpeciesPID<o2::track::PID::Proton>(2, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Electron>(0, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Muon>(1, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Pion>(2, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Kaon>(3, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Proton>(4, track, mom);
+      fillPID(track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Pion>(0, track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Kaon>(1, track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Proton>(2, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Electron>(0, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Muon>(1, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Pion>(2, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Kaon>(3, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Proton>(4, track, tpcmom, tofmom);
     }
   }
 };
@@ -625,11 +680,11 @@ struct PidExtraDataCollectingEngine {
             fhIdTPCnSigmasVsP[isp][imainsp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "PID", "Selected"),
                                                            HNAMESTRING("tpcNSigmasVsPSelected_%s_to%s", tnames[isp].c_str(), allmainspnames[imainsp].c_str()),
                                                            HTITLESTRING("TPC n#sigma for selected %s to the %s line", tnames[isp].c_str(), allmainsptitles[imainsp].c_str()),
-                                                           kTH2F, {pidPAxis, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TPC}^{%s}", mainsptitles[isp].c_str())}});
+                                                           kTH2F, {pidPAxis, {noOfNSigmaBins, minNSigma, maxNSigma, FORMATSTRING("n#sigma_{TPC}^{%s}", mainsptitles[isp].c_str())}});
             fhIdTOFnSigmasVsP[isp][imainsp] = ADDHISTOGRAM(TH2, DIRECTORYSTRING("%s/%s/%s", dirname, "PID", "Selected"),
                                                            HNAMESTRING("tofNSigmasVsPSelected_%s_to%s", tnames[isp].c_str(), allmainspnames[imainsp].c_str()),
                                                            HTITLESTRING("TOF n#sigma for selected %s to the %s line", tnames[isp].c_str(), allmainsptitles[imainsp].c_str()),
-                                                           kTH2F, {pidPAxis, {120, -6.0, 6.0, FORMATSTRING("n#sigma_{TOF}^{%s}", mainsptitles[isp].c_str())}});
+                                                           kTH2F, {pidPAxis, {noOfNSigmaBins, minNSigma, maxNSigma, FORMATSTRING("n#sigma_{TOF}^{%s}", mainsptitles[isp].c_str())}});
           }
         }
       }
@@ -637,7 +692,7 @@ struct PidExtraDataCollectingEngine {
   }
 
   template <o2::track::PID::ID id, typename TrackObject>
-  void fillAllSpeciesPID(uint ix, TrackObject const& track, float mom)
+  void fillAllSpeciesPID(uint ix, TrackObject const& track, float tpcmom, float tofmom)
   {
     if (track.trackacceptedid() < 0) {
       /* track not accepted */
@@ -648,46 +703,54 @@ struct PidExtraDataCollectingEngine {
     } else {
       ix = 2 * ix;
     }
-    fhIdTPCnSigmasVsP[track.trackacceptedid()][ix]->Fill(mom, o2::aod::pidutils::tpcNSigma<id>(track));
-    fhIdTOFnSigmasVsP[track.trackacceptedid()][ix]->Fill(mom, o2::aod::pidutils::tofNSigma<id>(track));
+    fhIdTPCnSigmasVsP[track.trackacceptedid()][ix]->Fill(tpcmom, o2::aod::pidutils::tpcNSigma<id>(track));
+    fhIdTOFnSigmasVsP[track.trackacceptedid()][ix]->Fill(tofmom, o2::aod::pidutils::tofNSigma<id>(track));
     if (efficiencyandqatask::pidselector.isGlobalSpecies(track.trackacceptedid() / 2, id)) {
       /* only if the species of the selected track matches the target of the number of sigmas */
-      fpIdTPCdEdxSignalVsPSigmas[track.trackacceptedid()]->Fill(mom, track.tpcSignal(), o2::aod::pidutils::tpcNSigma<id>(track));
-      fpIdTOFSignalVsPSigmas[track.trackacceptedid()]->Fill(mom, track.beta(), o2::aod::pidutils::tofNSigma<id>(track));
+      if constexpr (framework::has_type_v<o2::aod::mcpidtpc::DeDxTunedMc, typename TrackObject::all_columns>) {
+        fpIdTPCdEdxSignalVsPSigmas[track.trackacceptedid()]->Fill(tpcmom, track.mcTunedTPCSignal(), o2::aod::pidutils::tpcNSigma<id>(track));
+      } else {
+        fpIdTPCdEdxSignalVsPSigmas[track.trackacceptedid()]->Fill(tpcmom, track.tpcSignal(), o2::aod::pidutils::tpcNSigma<id>(track));
+      }
+      fpIdTOFSignalVsPSigmas[track.trackacceptedid()]->Fill(tofmom, track.beta(), o2::aod::pidutils::tofNSigma<id>(track));
     }
   }
 
   template <o2::track::PID::ID id, typename TrackObject>
-  void fillSpeciesPID(uint, TrackObject const&, float)
+  void fillSpeciesPID(uint, TrackObject const&, float, float)
   {
   }
 
   template <typename TrackObject>
-  void fillPID(TrackObject const& track, float mom)
+  void fillPID(TrackObject const& track, float tpcmom, float tofmom)
   {
     if (track.trackacceptedid() < 0) {
       /* track not accepted */
       return;
     }
-    fhIdTPCdEdxSignalVsP[track.trackacceptedid()]->Fill(mom, track.tpcSignal());
-    fhIdTOFSignalVsP[track.trackacceptedid()]->Fill(mom, track.beta());
+    if constexpr (framework::has_type_v<o2::aod::mcpidtpc::DeDxTunedMc, typename TrackObject::all_columns>) {
+      fhIdTPCdEdxSignalVsP[track.trackacceptedid()]->Fill(tpcmom, track.mcTunedTPCSignal());
+    } else {
+      fhIdTPCdEdxSignalVsP[track.trackacceptedid()]->Fill(tpcmom, track.tpcSignal());
+    }
+    fhIdTOFSignalVsP[track.trackacceptedid()]->Fill(tofmom, track.beta());
   }
 
   template <efficiencyandqatask::KindOfData kindOfData, typename TrackObject>
-  void processTrack(TrackObject const& track, float mom)
+  void processTrack(TrackObject const& track, float tpcmom, float tofmom)
   {
     using namespace efficiencyandqatask;
 
     if constexpr (kindOfData == kReco) {
-      fillPID(track, mom);
-      fillSpeciesPID<o2::track::PID::Pion>(0, track, mom);
-      fillSpeciesPID<o2::track::PID::Kaon>(1, track, mom);
-      fillSpeciesPID<o2::track::PID::Proton>(2, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Electron>(0, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Muon>(1, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Pion>(2, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Kaon>(3, track, mom);
-      fillAllSpeciesPID<o2::track::PID::Proton>(4, track, mom);
+      fillPID(track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Pion>(0, track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Kaon>(1, track, tpcmom, tofmom);
+      fillSpeciesPID<o2::track::PID::Proton>(2, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Electron>(0, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Muon>(1, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Pion>(2, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Kaon>(3, track, tpcmom, tofmom);
+      fillAllSpeciesPID<o2::track::PID::Proton>(4, track, tpcmom, tofmom);
     }
   }
 };
@@ -732,6 +795,9 @@ struct DptDptEfficiencyAndQc {
 
   Configurable<bool> useCentrality{"useCentrality", false, "Perform the task using centrality/multiplicity classes. Default value: false"};
   Configurable<bool> useTPCInnerWallMomentum{"useTPCInnerWallMomentum", false, "Use the TPC inner wall momentum. Default: false"};
+  Configurable<float> cfgMinNSigma{"cfgMinNSigma", -4.05f, "nsigma axes lowest value. Default: -4.05"};
+  Configurable<float> cfgMaxNSigma{"cfgMaxNSigma", 4.05f, "nsigma axes highest value. Default: 4.05"};
+  Configurable<float> cfgWidthNSigmaBin{"cfgWidthNSigmaBin", 0.1, "nsigma axes bin width. Deafault: 0.1"};
 
   void init(o2::framework::InitContext& initContext)
   {
@@ -822,6 +888,12 @@ struct DptDptEfficiencyAndQc {
         fCentMultMin[0] = 0.0f;
         fCentMultMax[0] = 100.0f;
       }
+      /* configure nsigma axes */
+      minNSigma = cfgMinNSigma.value;
+      maxNSigma = cfgMaxNSigma.value;
+      widthNSigmaBin = cfgWidthNSigmaBin.value;
+      noOfNSigmaBins = static_cast<int>((maxNSigma - minNSigma) / widthNSigmaBin);
+
       bool doBasicAnalysis = doprocessDetectorLevelNotStored || doprocessReconstructedNotStored;
       bool doPidAnalysis = doprocessDetectorLevelNotStoredPID || doprocessReconstructedNotStoredPID;
       bool doPidExtraAnalysis = doprocessDetectorLevelNotStoredPIDExtra || doprocessReconstructedNotStoredPIDExtra;
@@ -913,20 +985,21 @@ struct DptDptEfficiencyAndQc {
     int ixDCE = getDCEindex(collision);
     if (!(ixDCE < 0)) {
       for (auto const& track : tracks) {
-        float mom = track.p();
+        float tpcmom = track.p();
+        float tofmom = track.p();
         if (useTPCInnerWallMomentum.value) {
           if constexpr (!framework::has_type_v<aod::mcparticle::PdgCode, typename PassedTracks::iterator::all_columns>) {
-            mom = track.tpcInnerParam();
+            tpcmom = track.tpcInnerParam();
           }
         }
         if constexpr (kindOfProcess == kBASIC) {
           qaDataCE[ixDCE]->processTrack<kindOfData, FilteredCollisions>(collision.posZ(), track);
         }
         if constexpr (kindOfProcess == kPID) {
-          pidDataCE[ixDCE]->processTrack<kindOfData>(track, mom);
+          pidDataCE[ixDCE]->processTrack<kindOfData>(track, tpcmom, tofmom);
         }
         if constexpr (kindOfProcess == kPIDEXTRA) {
-          pidExtraDataCE[ixDCE]->processTrack<kindOfData>(track, mom);
+          pidExtraDataCE[ixDCE]->processTrack<kindOfData>(track, tpcmom, tofmom);
         }
       }
     }
