@@ -42,6 +42,7 @@ static const std::vector<std::string> tableNames{"Electron", // 0
                                                  "Helium",   // 7
                                                  "Alpha"};   // 8
 static const std::vector<std::string> parameterNames{"enable"};
+static const std::vector<std::string> selectionNames{"selection"};
 static const int defaultParameters[9][nParameters]{{0}, {0}, {1}, {1}, {1}, {0}, {0}, {0}, {0}};
 static const float defaultPIDSelection[9][nParameters]{{-1.f}, {-1.f}, {-1.f}, {-1.f}, {-1.f}, {-1.f}, {-1.f}, {-1.f}, {-1.f}};
 static constexpr int Np = 9;
@@ -146,10 +147,10 @@ struct itsPidQa {
                                                   {defaultParameters[0], 9, nParameters, tableNames, parameterNames},
                                                   "Produce QA for this species: 0 - no, 1 - yes"};
   Configurable<LabeledArray<float>> tofSelection{"tofSelection",
-                                                 {defaultPIDSelection[0], 9, nParameters, tableNames, parameterNames},
+                                                 {defaultPIDSelection[0], 9, nParameters, tableNames, selectionNames},
                                                  "Selection on the TOF nsigma"};
   Configurable<LabeledArray<float>> tpcSelection{"tpcSelection",
-                                                 {defaultPIDSelection[0], 9, nParameters, tableNames, parameterNames},
+                                                 {defaultPIDSelection[0], 9, nParameters, tableNames, selectionNames},
                                                  "Selection on the TPC nsigma"};
 
   Configurable<int> logAxis{"logAxis", 1, "Flag to use a log momentum axis"};
@@ -214,11 +215,11 @@ struct itsPidQa {
     h = histos.add<TH1>("event/particlehypo", "", kTH1D, {{10, 0, 10, "PID in tracking"}});
     for (int id = 0; id < 9; id++) {
       h->GetXaxis()->SetBinLabel(id + 1, PID::getName(id));
-      tpcSelValues[id] = tpcSelection->get(tableNames[id].c_str(), "enable");
+      tpcSelValues[id] = tpcSelection->get(tableNames[id].c_str(), "selection");
       if (tpcSelValues[id] <= 0.f) {
         tpcSelValues[id] = 999.f;
       }
-      tofSelValues[id] = tofSelection->get(tableNames[id].c_str(), "enable");
+      tofSelValues[id] = tofSelection->get(tableNames[id].c_str(), "selection");
       if (tofSelValues[id] <= 0.f) {
         tofSelValues[id] = 999.f;
       }
@@ -242,10 +243,10 @@ struct itsPidQa {
       hNsigmaPos[id] = histos.add<TH2>(Form("nsigmaPos/%s", pN[id]), axisTitle, kTH2F, {pAxis, nSigmaAxis});
       hNsigmaNeg[id] = histos.add<TH2>(Form("nsigmaNeg/%s", pN[id]), axisTitle, kTH2F, {pAxis, nSigmaAxis});
     }
-    histos.add("event/averageClusterSize", "", kTH2F, {ptAxis, avClsAxis});
-    histos.add("event/averageClusterSizePerCoslInv", "", kTH2F, {ptAxis, avClsEffAxis});
-    histos.add("event/SelectedAverageClusterSize", "", kTH2F, {ptAxis, avClsAxis});
-    histos.add("event/SelectedAverageClusterSizePerCoslInv", "", kTH2F, {ptAxis, avClsEffAxis});
+    histos.add("event/averageClusterSize", "", kTH2D, {pAxis, avClsAxis});
+    histos.add("event/averageClusterSizePerCoslInv", "", kTH2D, {pAxis, avClsEffAxis});
+    histos.add("event/SelectedAverageClusterSize", "", kTH2D, {pAxis, avClsAxis});
+    histos.add("event/SelectedAverageClusterSizePerCoslInv", "", kTH2D, {pAxis, avClsEffAxis});
     LOG(info) << "QA PID ITS histograms:";
     histos.print();
   }

@@ -796,9 +796,9 @@ struct highmasslambda {
         Proton = ROOT::Math::PxPyPzMVector(track1.px(), track1.py(), track1.pz(), massPr);
         Kshort = ROOT::Math::PxPyPzMVector(v0.px(), v0.py(), v0.pz(), v0.mK0Short());
         Lambdac = Proton + Kshort;
-        if (Lambdac.Pt() > 6.0 || Lambdac.Pt() < 2.0) {
-          continue;
-        }
+        // if (Lambdac.Pt() > 6.0 || Lambdac.Pt() < 2.0) {
+        //   continue;
+        // }
         if (std::abs(Lambdac.Rapidity()) > confRapidity) {
           continue;
         }
@@ -1093,7 +1093,7 @@ struct highmasslambda {
             double anglesignrot = decaylengthxrot * LambdacRot.Px() + decaylengthyrot * LambdacRot.Py() + decaylengthzrot * LambdacRot.Pz();
             double CPAlambdacrot = anglesignrot / (decaylengthrot * LambdacRot.P());
             if (LambdacRot.M() > cMinLambdaMass && LambdacRot.M() <= cMaxLambdaMass && std::abs(LambdacRot.Rapidity()) < confRapidity && LambdacRot.Pt() > 1.0 && LambdacRot.Pt() <= 6.0 && decaylengthrot < ConfMaxDecayLength && CPAlambdacrot > ConfMinCPA) {
-              histos.fill(HIST("hSparseV2SASameEventRotational_V2_SVX"), LambdacRot.M(), LambdacRot.Pt(), v2Rot, decaylengthrot, CPAlambdacrot);
+              histos.fill(HIST("hSparseV2SASameEventRotational_V2_SVX"), LambdacRot.M(), LambdacRot.Pt(), v2Rot, decaylength, CPAlambdacrot);
             }
           }
         }
